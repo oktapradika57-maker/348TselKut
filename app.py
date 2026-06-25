@@ -206,55 +206,46 @@ else:
     .custom-footer { text-align: center; font-size: 12px; color: #888; margin-top: 30px; border-top: 1px solid #333; padding-top: 10px; }
     </style>""", unsafe_allow_html=True)
 
-    # --- FITUR TAMBAHAN: PROSES & FILTER TIMESTAMP ---
+    # --- PROSES TIMESTAMP KE DATE ---
     if 'Timestamp' in df_merged.columns:
-        # Konversi kolom Timestamp ke format DateTime yang aman
         df_merged['parsed_timestamp'] = pd.to_datetime(df_merged['Timestamp'], errors='coerce')
-        # Buat kolom pembantu bertipe Date saja (tanpa Jam) untuk komparasi filter kalender
         df_merged['date_only'] = df_merged['parsed_timestamp'].dt.date
         
-        # Cari tanggal terkecil dan terbesar yang ada di data asli sebagai default range
-        valid_dates = df_merged['date_only'].dropna()
-        min_date_val = valid_dates.min() if not valid_dates.empty else date(2025, 1, 1)
-        max_date_val = valid_dates.max() if not valid_dates.empty else date.today()
+        valid_dates = df_merged['date_only'].dropna().unique()
+        valid_dates = sorted(list(valid_dates), reverse=True) # Urutkan dari yang paling baru
+        default_date = valid_dates[0] if valid_dates else date.today()
     else:
         df_merged['date_only'] = date.today()
-        min_date_val = date(2025, 1, 1)
-        max_date_val = date.today()
+        valid_dates = [date.today()]
+        default_date = date.today()
 
-    # --- ROW 1: HEADER & FILTERS ---
-    # Memisahkan Header menjadi 3 kolom: Judul Dashboard, Filter Rentang Waktu, & Dropdown Site Target
+    # --- ROW 1: HEADER & SINGLE DATE FILTER ---
     col_head_title, col_head_date, col_head_select = st.columns([1.5, 0.6, 0.9])
     
     with col_head_title:
         st.markdown("""<div style='background: linear-gradient(135deg, #ed1c24 0%, #b71c1c 50%, #1a1a1a 100%); padding: 12px 20px; border-radius: 6px; color: white; border-left: 6px solid #ffc13b; box-shadow: 0 4px 6px rgba(0,0,0,0.3);'><h3 style='margin:0; font-size:22px; font-weight:900; letter-spacing: 0.5px;'>🚀 TASK FORCE 348 <span style='color: #ffc13b;'>|</span> NOP PALANGKARAYA</h3><p style='margin: 2px 0 0 0; font-size: 12px; opacity: 0.9; font-weight: 500;'>TELECOMMUNICATION & NETWORK OPERATION DASHBOARD</p></div>""", unsafe_allow_html=True)
     
     with col_head_date:
-        # Menambahkan widget filter Rentang Waktu (Calendar)
-        rentang_waktu = st.date_input(
-            "📅 Filter Tanggal Data:",
-            value=(min_date_val, max_date_val),
+        # PERBAIKAN: Menggunakan pilihan tanggal tunggal (bukan rentang)
+        pilihan_tanggal = st.date_input(
+            "📅 Pilihan Tanggal Data:",
+            value=default_date,
             min_value=date(2024, 1, 1),
             max_value=date(2030, 12, 31),
-            key="filter_timestamp_range"
+            key="filter_timestamp_single"
         )
         
-    # Memfilter data secara dinamis berdasarkan input range tanggal yang dipilih user
-    if isinstance(rentang_waktu, tuple) and len(rentang_waktu) == 2:
-        start_date, end_date = rentang_waktu
-        df_filtered_view = df_merged[(df_merged['date_only'] >= start_date) & (df_merged['date_only'] <= end_date)]
-    else:
-        # Jika user baru mengeklik satu tanggal, pakai default seluruh data terlebih dahulu
-        df_filtered_view = df_merged
+    # Memfilter data yang tepat sama dengan tanggal pilihan tunggal
+    df_filtered_view = df_merged[df_merged['date_only'] == pilihan_tanggal]
 
     with col_head_select:
-        # Menampilkan Dropdown Site Target yang sudah terfilter rentang waktunya saja
         if not df_filtered_view.empty:
             list_dropdown_pilihan = sorted(df_filtered_view['dropdown_label'].unique())
-            label_pilihan = st.selectbox("🎯 Target Monitoring:", list_dropdown_pilihan, label_visibility="visible")
+            label_pilihan = st.selectbox("🎯 Target Monitoring:", list_dropdown_pilihan, key="dropdown_site_select")
             data_site = df_filtered_view[df_filtered_view['dropdown_label'] == label_pilihan].iloc[0]
         else:
-            st.warning("⚠️ Tidak ada data pada tanggal tersebut!")
+            # Jika pada tanggal tersebut tidak ada aktivitas pengisian data
+            st.warning(f"⚠️ Tidak ada data pada tanggal {pilihan_tanggal.strftime('%d %b %Y')}")
             st.stop()
 
     st.markdown(f"<p style='text-align: right; margin: -10px 5px 8px 0; font-size: 13px;'><b>Last Data Timestamp:</b> {data_site.get('Timestamp', '-')}</p>", unsafe_allow_html=True)

@@ -4,6 +4,7 @@ import requests
 import re
 import difflib
 import altair as alt
+from datetime import datetime, date
 
 # Konfigurasi halaman agar fullscreen, responsif, dan rapi ala slide PPT
 st.set_page_config(layout="wide", page_title="Task Force 348 Dashboard")
@@ -152,7 +153,6 @@ def fetch_inap_for_site(site_clean, site_asli):
 df_sheet = load_data_from_google_sheets()
 df_sup_dapot = load_data_from_supabase_dapot()
 
-# Perbaikan Pipeline: Tetap berjalan meskipun salah satu database kosong agar data sheet tidak hilang
 if df_sheet.empty:
     st.error("🚨 Gagal memuat data utama dari Google Sheets! Periksa setelan file atau koneksi Anda.")
 else:
@@ -164,14 +164,12 @@ else:
         list_site_sup = df_sup_dapot['site_clean_sup'].dropna().unique().tolist()
         mapping_fuzzy = {site_s: (site_s if site_s in list_site_sup else cari_site_terdekat(site_s, list_site_sup)) for site_s in df_sheet['site_clean_sheet'].unique()}
         df_sheet['matched_site_sup'] = df_sheet['site_clean_sheet'].map(mapping_fuzzy)
-        # Menggunakan left join dari df_sheet agar seluruh baris spreadsheet wajib masuk 100%
         df_merged = pd.merge(df_sheet, df_sup_dapot, left_on='matched_site_sup', right_on='site_clean_sup', how='left', suffixes=('', '_dapot'))
     else:
         df_merged = df_sheet.copy()
         df_merged['matched_site_sup'] = None
 
     def susun_nama_dropdown(row):
-        # Gunakan ID asli Sheet jika tidak ada kecocokan di Supabase
         s_id = row['site_clean_sheet'] if pd.isna(row.get('matched_site_sup')) or not row['matched_site_sup'] else row['matched_site_sup']
         s_name = row.get('site_name') if pd.notna(row.get('site_name')) else None
         if not s_name and kolom_site_sheet in row:
@@ -199,7 +197,6 @@ else:
     .lightbox .caption-text { position: absolute; bottom: 30px; color: #ffc13b; font-size: 18px; font-weight: bold; text-align: center; width: 100%; text-shadow: 0px 2px 4px rgba(0,0,0,0.8); z-index: 99999999; font-family: sans-serif; letter-spacing: 0.5px; }
     .video-overlay-btn { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(211, 47, 47, 0.85); color: white; border-radius: 50%; width: 26px; height: 24px; line-height: 24px; font-size: 11px; font-weight: bold; pointer-events: none; box-shadow: 0px 2px 5px rgba(0,0,0,0.5); }
     
-    /* STYLE: Tombol Download Media */
     .btn-download-media { display: block; background-color: #2e7d32; color: #ffffff !important; font-size: 9px; font-weight: bold; padding: 4px 2px; margin-top: 5px; border-radius: 3px; text-decoration: none !important; border: 1px solid #1b5e20; text-align: center; }
     .btn-download-media:hover { background-color: #4caf50; }
     
@@ -209,15 +206,58 @@ else:
     .custom-footer { text-align: center; font-size: 12px; color: #888; margin-top: 30px; border-top: 1px solid #333; padding-top: 10px; }
     </style>""", unsafe_allow_html=True)
 
-    # --- ROW 1: HEADER ---
-    col_head_title, col_head_select = st.columns([1.8, 1.2])
+    # --- FITUR TAMBAHAN: PROSES & FILTER TIMESTAMP ---
+    if 'Timestamp' in df_merged.columns:
+        # Konversi kolom Timestamp ke format DateTime yang aman
+        df_merged['parsed_timestamp'] = pd.to_datetime(df_merged['Timestamp'], errors='coerce')
+        # Buat kolom pembantu bertipe Date saja (tanpa Jam) untuk komparasi filter kalender
+        df_merged['date_only'] = df_merged['parsed_timestamp'].dt.date
+        
+        # Cari tanggal terkecil dan terbesar yang ada di data asli sebagai default range
+        valid_dates = df_merged['date_only'].dropna()
+        min_date_val = valid_dates.min() if not valid_dates.empty else date(2025, 1, 1)
+        max_date_val = valid_dates.max() if not valid_dates.empty else date.today()
+    else:
+        df_merged['date_only'] = date.today()
+        min_date_val = date(2025, 1, 1)
+        max_date_val = date.today()
+
+    # --- ROW 1: HEADER & FILTERS ---
+    # Memisahkan Header menjadi 3 kolom: Judul Dashboard, Filter Rentang Waktu, & Dropdown Site Target
+    col_head_title, col_head_date, col_head_select = st.columns([1.5, 0.6, 0.9])
+    
     with col_head_title:
         st.markdown("""<div style='background: linear-gradient(135deg, #ed1c24 0%, #b71c1c 50%, #1a1a1a 100%); padding: 12px 20px; border-radius: 6px; color: white; border-left: 6px solid #ffc13b; box-shadow: 0 4px 6px rgba(0,0,0,0.3);'><h3 style='margin:0; font-size:22px; font-weight:900; letter-spacing: 0.5px;'>🚀 TASK FORCE 348 <span style='color: #ffc13b;'>|</span> NOP PALANGKARAYA</h3><p style='margin: 2px 0 0 0; font-size: 12px; opacity: 0.9; font-weight: 500;'>TELECOMMUNICATION & NETWORK OPERATION DASHBOARD</p></div>""", unsafe_allow_html=True)
-    with col_head_select:
-        label_pilihan = st.selectbox("🎯 Target Monitoring:", sorted(df_merged['dropdown_label'].unique()), label_visibility="collapsed")
+    
+    with col_head_date:
+        # Menambahkan widget filter Rentang Waktu (Calendar)
+        rentang_waktu = st.date_input(
+            "📅 Filter Tanggal Data:",
+            value=(min_date_val, max_date_val),
+            min_value=date(2024, 1, 1),
+            max_value=date(2030, 12, 31),
+            key="filter_timestamp_range"
+        )
+        
+    # Memfilter data secara dinamis berdasarkan input range tanggal yang dipilih user
+    if isinstance(rentang_waktu, tuple) and len(rentang_waktu) == 2:
+        start_date, end_date = rentang_waktu
+        df_filtered_view = df_merged[(df_merged['date_only'] >= start_date) & (df_merged['date_only'] <= end_date)]
+    else:
+        # Jika user baru mengeklik satu tanggal, pakai default seluruh data terlebih dahulu
+        df_filtered_view = df_merged
 
-    data_site = df_merged[df_merged['dropdown_label'] == label_pilihan].iloc[0]
-    st.markdown(f"<p style='text-align: right; margin: -10px 5px 8px 0; font-size: 13px;'><b>Last Data:</b> {data_site.get('Timestamp', '-')}</p>", unsafe_allow_html=True)
+    with col_head_select:
+        # Menampilkan Dropdown Site Target yang sudah terfilter rentang waktunya saja
+        if not df_filtered_view.empty:
+            list_dropdown_pilihan = sorted(df_filtered_view['dropdown_label'].unique())
+            label_pilihan = st.selectbox("🎯 Target Monitoring:", list_dropdown_pilihan, label_visibility="visible")
+            data_site = df_filtered_view[df_filtered_view['dropdown_label'] == label_pilihan].iloc[0]
+        else:
+            st.warning("⚠️ Tidak ada data pada tanggal tersebut!")
+            st.stop()
+
+    st.markdown(f"<p style='text-align: right; margin: -10px 5px 8px 0; font-size: 13px;'><b>Last Data Timestamp:</b> {data_site.get('Timestamp', '-')}</p>", unsafe_allow_html=True)
 
     t_id_asli = str(data_site.get(kolom_site_sheet, '')).strip()
     t_id_clean = str(data_site.get('site_clean_sheet', '')).strip()

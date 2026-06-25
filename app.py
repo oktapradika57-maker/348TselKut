@@ -203,12 +203,13 @@ else:
     .custom-footer { text-align: center; font-size: 12px; color: #888; margin-top: 30px; border-top: 1px solid #333; padding-top: 10px; }
     </style>""", unsafe_allow_html=True)
 
-    # --- LOGIKA DEFAULT TANGGAL (KEMARIN / H-1) ---
+    # --- PENGAMAN DAN DETEKSI SMART FORMAT TANGGAL ---
     if 'Timestamp' in df_merged.columns:
-        df_merged['parsed_timestamp'] = pd.to_datetime(df_merged['Timestamp'], errors='coerce')
-        df_merged['date_only'] = df_merged['parsed_timestamp'].dt.date
+        # Multi-format parsing otomatis (mengatasi format Indonesia DD/MM/YYYY maupun ISO)
+        df_merged['parsed_timestamp'] = pd.to_datetime(df_merged['Timestamp'], errors='coerce', dayfirst=True)
+        df_merged['date_obj'] = df_merged['parsed_timestamp'].dt.date
     else:
-        df_merged['date_only'] = date.today()
+        df_merged['date_obj'] = date.today()
 
     hari_kemarin = date.today() - timedelta(days=1)
 
@@ -226,7 +227,8 @@ else:
             key="filter_date_picker"
         )
         
-    df_filtered_view = df_merged[df_merged['date_only'] == pilihan_tanggal]
+    # Bandingkan langsung objek date vs objek date (100% akurat & aman dari perbedaan format string)
+    df_filtered_view = df_merged[df_merged['date_obj'] == pilihan_tanggal]
 
     with col_head_select:
         if not df_filtered_view.empty:
@@ -235,6 +237,12 @@ else:
             data_site = df_filtered_view[df_filtered_view['dropdown_label'] == label_pilihan].iloc[0]
         else:
             st.warning(f"⚠️ Tidak ada data pada tanggal {pilihan_tanggal.strftime('%d/%m/%Y')}")
+            
+            # Berikan bantuan info list tanggal berapa saja yang real ada datanya di GSheets Anda
+            if 'date_obj' in df_merged.columns and not df_merged['date_obj'].dropna().empty:
+                avail_dates = sorted(df_merged['date_obj'].dropna().unique())
+                formatted_avail = [d.strftime('%d/%m/%Y') for d in avail_dates[-5:]]
+                st.info(f"💡 Tanggal yang ada datanya di GSheet: {', '.join(formatted_avail)}")
             st.stop()
 
     # Format Tampilan Label Waktu Aktual info "Last Data Timestamp"
@@ -368,7 +376,6 @@ else:
                     min_date = df_altair[col_date].min().isoformat()
                     max_date = df_altair[col_date].max().isoformat()
                     
-                    # Konfigurasi format label sumbu X Tren Grafik ke DD/MM/YYYY (%d/%m/%Y)
                     base = alt.Chart(df_altair).encode(
                         x=alt.X(f'{col_date}:T', 
                                 scale=alt.Scale(domain=(min_date, max_date)),
@@ -395,7 +402,6 @@ else:
     with c4:
         st.markdown("<div class='ppt-card-gold'><b style='font-size:14px;'>📝 Findings & Action Plan</b></div>", unsafe_allow_html=True)
         
-        # Penanganan aman jika kolom analisa ketersediaan sheet tidak ada
         kolom_finding = next((c for c in df_sheet.columns if "hasil" in str(c).lower() and "analis" in str(c).lower()), None)
         finding_val = data_site.get(kolom_finding, '') if kolom_finding else ""
         if pd.isna(finding_val): finding_val = ""

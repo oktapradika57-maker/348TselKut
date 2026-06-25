@@ -12,9 +12,8 @@ st.set_page_config(layout="wide", page_title="Task Force 348 Dashboard")
 GOOGLE_SHEET_ID = "1FGKOzWoUrbf3PXN_ahgG1t-83JZT4H4sioQepePbBxM"
 APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxCQUGt5_Jybed2AwFP4xXFru6GxuMoSwQpUZ63aK9o0WlUFnumOoseRWwgRmxZZ9XYtQ/exec"
 
-# Menggunakan st.secrets demi keamanan kredensial
-SUPABASE_URL = st.secrets.get("SUPABASE_URL", "https://sfyfijndolnwqklqnpmj.supabase.co")
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "sb_publishable_digs5GILs-TEe4lEpPj4qQ_VRrQ7FCm")
+SUPABASE_URL = "https://sfyfijndolnwqklqnpmj.supabase.co"
+SUPABASE_KEY = "sb_publishable_digs5GILs-TEe4lEpPj4qQ_VRrQ7FCm"
 SUPABASE_TABLE_DAPOT = "dapot_data"
 SUPABASE_TABLE_INAP = "inap_data"
 
@@ -37,13 +36,13 @@ def cari_site_terdekat(site_appsheet, list_site_supabase):
 
 def konversi_link_gdrive(url_tunggal):
     if not url_tunggal or str(url_tunggal).strip() == "": return None, None, None, None
-    link_bersih = str(url_tunggal).strip()
+    link_inter = str(url_tunggal).strip()
     file_id = None
-    if "id=" in link_bersih:
-        id_match = re.search(r'id=([a-zA-Z0-9_-]+)', link_bersih)
+    if "id=" in link_inter:
+        id_match = re.search(r'id=([a-zA-Z0-9_-]+)', link_inter)
         if id_match: file_id = id_match.group(1)
-    elif "drive.google.com/file/d/" in link_bersih:
-        id_match = re.search(r'/file/d/([a-zA-Z0-9_-]+)', link_bersih)
+    elif "drive.google.com/file/d/" in link_inter:
+        id_match = re.search(r'/file/d/([a-zA-Z0-9_-]+)', link_inter)
         if id_match: file_id = id_match.group(1)
             
     if file_id:
@@ -52,7 +51,7 @@ def konversi_link_gdrive(url_tunggal):
         dl_url = f"https://drive.google.com/uc?export=download&id={file_id}"
         embed_url = f"https://drive.google.com/file/d/{file_id}/preview"
         return thumb_url, zoom_url, dl_url, embed_url
-    return link_bersih, link_bersih, link_bersih, None
+    return link_inter, link_inter, link_inter, None
 
 def dapatkan_nilai_teknis(row, kolom_sheet, kolom_supabase):
     val_sheet = None
@@ -93,7 +92,7 @@ def update_tech_specs_gsheet(site_id_asli, dict_specs):
         return False, response.text
     except Exception as e: return False, str(e)
 
-# --- FUNGSI PULL DATA UTAMA (MENGGUNAKAN CACHING) ---
+# --- FUNGSI PULL DATA UTAMA ---
 @st.cache_data(ttl=60)
 def load_data_from_google_sheets():
     url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/export?format=csv"
@@ -110,32 +109,6 @@ def load_data_from_supabase_dapot():
         return pd.DataFrame()
     except: return pd.DataFrame()
 
-@st.cache_data(ttl=60)
-def proses_penggabungan_data(df_sheet_raw, df_sup_dapot_raw):
-    if df_sheet_raw.empty or df_sup_dapot_raw.empty:
-        return pd.DataFrame(), None
-        
-    df_s = df_sheet_raw.copy()
-    df_d = df_sup_dapot_raw.copy()
-    
-    kolom_site_sheet = 'Site' if 'Site' in df_s.columns else ([c for c in df_s.columns if "site" in c.lower() or "id" in c.lower()] + [df_s.columns[0]])[0]
-    df_s['site_clean_sheet'] = df_s[kolom_site_sheet].apply(format_site_id)
-    df_d['site_clean_sup'] = df_d['site_id'].apply(format_site_id)
-    
-    list_site_sup = df_d['site_clean_sup'].dropna().unique().tolist()
-    mapping_fuzzy = {site_s: (site_s if site_s in list_site_sup else cari_site_terdekat(site_s, list_site_sup)) for site_s in df_s['site_clean_sheet'].unique()}
-    df_s['matched_site_sup'] = df_s['site_clean_sheet'].map(mapping_fuzzy)
-    df_m = pd.merge(df_s, df_d, left_on='matched_site_sup', right_on='site_clean_sup', how='left', suffixes=('', '_dapot'))
-
-    def susun_nama_dropdown(row):
-        s_id = row['matched_site_sup'] if pd.notna(row['matched_site_sup']) else row['site_clean_sheet']
-        s_name = row['site_name'] if pd.notna(row.get('site_name')) else 'UNKNOWN NAME'
-        return f"[{s_id}] ➔ {s_name}"
-        
-    df_m['dropdown_label'] = df_m.apply(susun_nama_dropdown, axis=1)
-    return df_m, kolom_site_sheet
-
-@st.cache_data(ttl=300)
 def fetch_inap_for_site(site_clean, site_asli):
     variants = set()
     for s in [site_clean, site_asli]:
@@ -176,15 +149,37 @@ def fetch_inap_for_site(site_clean, site_asli):
     except: pass
     return pd.DataFrame()
 
-# --- EKSEKUSI PIPELINE DATA ---
-df_sheet_raw = load_data_from_google_sheets()
-df_sup_dapot_raw = load_data_from_supabase_dapot()
+df_sheet = load_data_from_google_sheets()
+df_sup_dapot = load_data_from_supabase_dapot()
 
-df_merged, kolom_site_sheet = proses_penggabungan_data(df_sheet_raw, df_sup_dapot_raw)
-
-if df_merged.empty:
-    st.error("🚨 Gagal memuat data utama! Cek koneksi Google Sheet & Supabase Credentials.")
+# Perbaikan Pipeline: Tetap berjalan meskipun salah satu database kosong agar data sheet tidak hilang
+if df_sheet.empty:
+    st.error("🚨 Gagal memuat data utama dari Google Sheets! Periksa setelan file atau koneksi Anda.")
 else:
+    kolom_site_sheet = 'Site' if 'Site' in df_sheet.columns else ([c for c in df_sheet.columns if "site" in c.lower() or "id" in c.lower()] + [df_sheet.columns[0]])[0]
+    df_sheet['site_clean_sheet'] = df_sheet[kolom_site_sheet].apply(format_site_id)
+    
+    if not df_sup_dapot.empty:
+        df_sup_dapot['site_clean_sup'] = df_sup_dapot['site_id'].apply(format_site_id)
+        list_site_sup = df_sup_dapot['site_clean_sup'].dropna().unique().tolist()
+        mapping_fuzzy = {site_s: (site_s if site_s in list_site_sup else cari_site_terdekat(site_s, list_site_sup)) for site_s in df_sheet['site_clean_sheet'].unique()}
+        df_sheet['matched_site_sup'] = df_sheet['site_clean_sheet'].map(mapping_fuzzy)
+        # Menggunakan left join dari df_sheet agar seluruh baris spreadsheet wajib masuk 100%
+        df_merged = pd.merge(df_sheet, df_sup_dapot, left_on='matched_site_sup', right_on='site_clean_sup', how='left', suffixes=('', '_dapot'))
+    else:
+        df_merged = df_sheet.copy()
+        df_merged['matched_site_sup'] = None
+
+    def susun_nama_dropdown(row):
+        # Gunakan ID asli Sheet jika tidak ada kecocokan di Supabase
+        s_id = row['site_clean_sheet'] if pd.isna(row.get('matched_site_sup')) or not row['matched_site_sup'] else row['matched_site_sup']
+        s_name = row.get('site_name') if pd.notna(row.get('site_name')) else None
+        if not s_name and kolom_site_sheet in row:
+            s_name = row[kolom_site_sheet]
+        return f"[{s_id}] ➔ {s_name if pd.notna(s_name) else 'Belum Terdata di Supabase'}"
+        
+    df_merged['dropdown_label'] = df_merged.apply(susun_nama_dropdown, axis=1)
+
     # --- CSS CUSTOM ---
     st.markdown("""<style>
     .block-container { padding-top: 3.2rem !important; padding-bottom: 1rem !important; }
@@ -204,9 +199,9 @@ else:
     .lightbox .caption-text { position: absolute; bottom: 30px; color: #ffc13b; font-size: 18px; font-weight: bold; text-align: center; width: 100%; text-shadow: 0px 2px 4px rgba(0,0,0,0.8); z-index: 99999999; font-family: sans-serif; letter-spacing: 0.5px; }
     .video-overlay-btn { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(211, 47, 47, 0.85); color: white; border-radius: 50%; width: 26px; height: 24px; line-height: 24px; font-size: 11px; font-weight: bold; pointer-events: none; box-shadow: 0px 2px 5px rgba(0,0,0,0.5); }
     
-    /* MODIFIKASI: Styling tombol unduh agar serasi di galeri */
-    .btn-download-media { display: block; background-color: #2e7d32; color: #ffffff !important; font-size: 9px; font-weight: bold; padding: 3px 5px; margin-top: 5px; border-radius: 3px; text-decoration: none !important; transition: 0.2s; border: 1px solid #1b5e20; text-align: center; }
-    .btn-download-media:hover { background-color: #4caf50; box-shadow: 0 0 5px #4caf50; }
+    /* STYLE: Tombol Download Media */
+    .btn-download-media { display: block; background-color: #2e7d32; color: #ffffff !important; font-size: 9px; font-weight: bold; padding: 4px 2px; margin-top: 5px; border-radius: 3px; text-decoration: none !important; border: 1px solid #1b5e20; text-align: center; }
+    .btn-download-media:hover { background-color: #4caf50; }
     
     div[data-testid="stMetric"] { background-color: #262730; padding: 5px 10px; border-radius: 4px; border: 1px solid #444; }
     .findings-grid { display: grid; grid-template-columns: auto auto; gap: 8px 15px; background-color: #262730; padding: 12px; border-radius: 6px; font-size: 13px; margin-bottom: 10px; border: 1px solid #444; }
@@ -224,7 +219,7 @@ else:
     data_site = df_merged[df_merged['dropdown_label'] == label_pilihan].iloc[0]
     st.markdown(f"<p style='text-align: right; margin: -10px 5px 8px 0; font-size: 13px;'><b>Last Data:</b> {data_site.get('Timestamp', '-')}</p>", unsafe_allow_html=True)
 
-    t_id_asli = str(data_site.get('site_id', '')).strip()
+    t_id_asli = str(data_site.get(kolom_site_sheet, '')).strip()
     t_id_clean = str(data_site.get('site_clean_sheet', '')).strip()
 
     # --- ROW 2: MAIN GRID (4 COLUMNS) ---
@@ -235,7 +230,7 @@ else:
         master_list = {
             "Parameter": ["Site ID", "Site Name", "Class", "Grid", "Hub", "Phase", "Grounding KWH"],
             "Value": [
-                data_site.get('site_id', '-'), data_site.get('site_name', '-'),
+                data_site.get(kolom_site_sheet, '-'), data_site.get('site_name', '-'),
                 data_site.get('site_class', '-'), data_site.get('grid_category_new', '-'),
                 data_site.get('hub_site', '-'), data_site.get('Phase PLN', '-'),
                 data_site.get('Grounding KWH', '-')
@@ -322,20 +317,17 @@ else:
 
             if col_date and col_avail:
                 chart_data = df_trend[[col_date, col_avail]].copy()
-                
                 chart_data[col_date] = pd.to_datetime(chart_data[col_date], errors='coerce')
                 chart_data = chart_data.dropna(subset=[col_date])
                 
                 batas_wajar = pd.Timestamp.now() + pd.Timedelta(days=7)
                 chart_data = chart_data[(chart_data[col_date].dt.year > 2000) & (chart_data[col_date] <= batas_wajar)]
-                
                 chart_data[col_avail] = chart_data[col_avail].astype(str).str.replace('%', '').str.replace(',', '.')
                 chart_data[col_avail] = pd.to_numeric(chart_data[col_avail], errors='coerce')
                 chart_data = chart_data.dropna(subset=[col_avail])
                 
                 if not chart_data.empty:
                     chart_data = chart_data.sort_values(by=col_date)
-                    
                     site_class = str(data_site.get('site_class', '')).upper().strip()
                     if 'DIAMOND' in site_class: target_val = 99.6
                     elif 'PLATINUM' in site_class: target_val = 99.2
@@ -355,7 +347,6 @@ else:
                                 scale=alt.Scale(domain=(min_date, max_date)),
                                 axis=alt.Axis(format='%d %b %Y', labelOverlap=True, title=None))
                     )
-                    
                     line_avail = base.mark_line(color='#00E5FF', strokeWidth=2, interpolate='monotone').encode(
                         y=alt.Y(f'{col_avail}:Q', scale=alt.Scale(zero=False), title='Availability (%)'),
                         tooltip=[
@@ -363,11 +354,9 @@ else:
                             alt.Tooltip(f'{col_avail}:Q', title='Availability (%)', format='.2f')
                         ]
                     )
-                    
                     line_target = base.mark_line(color='#ff5252', strokeDash=[4, 4], opacity=0.6, strokeWidth=1.5).encode(
                         y=alt.Y('Target:Q')
                     )
-                    
                     st.altair_chart(alt.layer(line_avail, line_target).properties(height=260), use_container_width=True)
                 else:
                     st.caption("ℹ️ Data ketersediaan site ini kosong atau format angka tidak valid.")
@@ -380,7 +369,7 @@ else:
     with c4:
         st.markdown("<div class='ppt-card-gold'><b style='font-size:14px;'>📝 Findings & Action Plan</b></div>", unsafe_allow_html=True)
         
-        kolom_finding = next((c for c in df_merged.columns if "hasil" in str(c).lower() and "analis" in str(c).lower()), 'Hasil Analisa')
+        kolom_finding = next((c for c in df_sheet.columns if "hasil" in str(c).lower() and "analis" in str(c).lower()), 'Hasil Analisa')
         finding_val = data_site.get(kolom_finding, '')
         if pd.isna(finding_val): finding_val = ""
         st_finding_input = st.text_area(
@@ -391,7 +380,7 @@ else:
             height=180
         )
         
-        kolom_reko = next((c for c in df_merged.columns if "rekomendasi" in str(c).lower()), 'Rekomendasi Perbaikan')
+        kolom_reko = next((c for c in df_sheet.columns if "rekomendasi" in str(c).lower()), 'Rekomendasi Perbaikan')
         reko_val = data_site.get(kolom_reko, '')
         if pd.isna(reko_val): reko_val = ""
         st_rekomendasi_input = st.text_area(
@@ -426,7 +415,7 @@ else:
     st.markdown("<div style='margin-top:10px; font-size:14px;'><b>📁 Evidence & Dokumentasi Slide</b></div>", unsafe_allow_html=True)
     all_photos, all_csvs, seen_urls = [], [], set()
     
-    for col_name in df_merged.columns:
+    for col_name in df_sheet.columns:
         val = data_site.get(col_name)
         if pd.isna(val) or not val: continue
         urls = re.findall(r'(https?://[^\s,"\'\}]+)', str(val))
@@ -463,7 +452,6 @@ else:
             content = f'<iframe src="{p["embed"]}" width="80%" height="80%" style="border:none; background:#000; border-radius:8px;" allow="autoplay"></iframe>' if p['is_vid'] else f'<img src="{p["zoom"]}">'
             ovr = '<div class="video-overlay-btn">▶</div>' if p['is_vid'] else ''
             
-            # PERBAIKAN UTAMA: Menambahkan tag tombol <a href="{p['dl_url']}" class="btn-download-media">📥 Download</a> tepat di bawah nama label media
             html_str += f'<input type="checkbox" id="hide-{sid}" class="hide-checkbox"><div class="photo-card"><label for="hide-{sid}" class="exclude-btn" title="Hide">&times;</label><a href="#lightbox-{sid}"><div style="position:relative;"><img src="{p["thumb"]}" style="width:100px; height:75px; object-fit:cover; border:1px solid #555; border-radius:4px;"/><div class="video-overlay-btn">{ovr}</div></div></a><div style="font-size:10px; margin-top:4px; color:#ccc; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="{p["label"]}">{p["label"]}</div><a href="{p["dl_url"]}" target="_blank" class="btn-download-media" download>📥 Download</a></div><div id="lightbox-{sid}" class="lightbox"><a href="#" class="close-lightbox">&times;</a>{nav}{content}<div class="caption-text">{p["label"]}</div></div>'
             
         if html_str: st.markdown(f'<div class="gallery-container">{html_str}</div>', unsafe_allow_html=True)

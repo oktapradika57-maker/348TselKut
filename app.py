@@ -12,7 +12,7 @@ st.set_page_config(layout="wide", page_title="Task Force 348 Dashboard")
 GOOGLE_SHEET_ID = "1FGKOzWoUrbf3PXN_ahgG1t-83JZT4H4sioQepePbBxM"
 APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxCQUGt5_Jybed2AwFP4xXFru6GxuMoSwQpUZ63aK9o0WlUFnumOoseRWwgRmxZZ9XYtQ/exec"
 
-# Menggunakan st.secrets demi keamanan kredensial (jika belum diset, akan otomatis menggunakan nilai default di bawah)
+# Menggunakan st.secrets demi keamanan kredensial
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", "https://sfyfijndolnwqklqnpmj.supabase.co")
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "sb_publishable_digs5GILs-TEe4lEpPj4qQ_VRrQ7FCm")
 SUPABASE_TABLE_DAPOT = "dapot_data"
@@ -110,7 +110,6 @@ def load_data_from_supabase_dapot():
         return pd.DataFrame()
     except: return pd.DataFrame()
 
-# OPTIMASI CACHE: Proses penggabungan data dan fuzzy matching di-cache agar perpindahan dropdown sangat instan
 @st.cache_data(ttl=60)
 def proses_penggabungan_data(df_sheet_raw, df_sup_dapot_raw):
     if df_sheet_raw.empty or df_sup_dapot_raw.empty:
@@ -184,7 +183,7 @@ df_sup_dapot_raw = load_data_from_supabase_dapot()
 df_merged, kolom_site_sheet = proses_penggabungan_data(df_sheet_raw, df_sup_dapot_raw)
 
 if df_merged.empty:
-    st.error("🚨 Gagal memuat data utama! Cek koneksi Google Sheet (Geser tab ke paling kiri) & Supabase Credentials.")
+    st.error("🚨 Gagal memuat data utama! Cek koneksi Google Sheet & Supabase Credentials.")
 else:
     # --- CSS CUSTOM ---
     st.markdown("""<style>
@@ -204,6 +203,11 @@ else:
     .lightbox .prev-arrow { left: 40px; } .lightbox .next-arrow { right: 40px; }
     .lightbox .caption-text { position: absolute; bottom: 30px; color: #ffc13b; font-size: 18px; font-weight: bold; text-align: center; width: 100%; text-shadow: 0px 2px 4px rgba(0,0,0,0.8); z-index: 99999999; font-family: sans-serif; letter-spacing: 0.5px; }
     .video-overlay-btn { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(211, 47, 47, 0.85); color: white; border-radius: 50%; width: 26px; height: 24px; line-height: 24px; font-size: 11px; font-weight: bold; pointer-events: none; box-shadow: 0px 2px 5px rgba(0,0,0,0.5); }
+    
+    /* MODIFIKASI: Styling tombol unduh agar serasi di galeri */
+    .btn-download-media { display: block; background-color: #2e7d32; color: #ffffff !important; font-size: 9px; font-weight: bold; padding: 3px 5px; margin-top: 5px; border-radius: 3px; text-decoration: none !important; transition: 0.2s; border: 1px solid #1b5e20; text-align: center; }
+    .btn-download-media:hover { background-color: #4caf50; box-shadow: 0 0 5px #4caf50; }
+    
     div[data-testid="stMetric"] { background-color: #262730; padding: 5px 10px; border-radius: 4px; border: 1px solid #444; }
     .findings-grid { display: grid; grid-template-columns: auto auto; gap: 8px 15px; background-color: #262730; padding: 12px; border-radius: 6px; font-size: 13px; margin-bottom: 10px; border: 1px solid #444; }
     .f-item { display: flex; justify-content: space-between; border-bottom: 1px solid #333; padding-bottom: 4px; }
@@ -322,7 +326,6 @@ else:
                 chart_data[col_date] = pd.to_datetime(chart_data[col_date], errors='coerce')
                 chart_data = chart_data.dropna(subset=[col_date])
                 
-                # Batas wajar dinamis sesuai real-time tahun berjalan
                 batas_wajar = pd.Timestamp.now() + pd.Timedelta(days=7)
                 chart_data = chart_data[(chart_data[col_date].dt.year > 2000) & (chart_data[col_date] <= batas_wajar)]
                 
@@ -377,7 +380,6 @@ else:
     with c4:
         st.markdown("<div class='ppt-card-gold'><b style='font-size:14px;'>📝 Findings & Action Plan</b></div>", unsafe_allow_html=True)
         
-        # PERBAIKAN: Menggunakan df_merged.columns (bukan df_sheet.columns) untuk menghindari NameError
         kolom_finding = next((c for c in df_merged.columns if "hasil" in str(c).lower() and "analis" in str(c).lower()), 'Hasil Analisa')
         finding_val = data_site.get(kolom_finding, '')
         if pd.isna(finding_val): finding_val = ""
@@ -389,7 +391,6 @@ else:
             height=180
         )
         
-        # PERBAIKAN: Menggunakan df_merged.columns di sini juga
         kolom_reko = next((c for c in df_merged.columns if "rekomendasi" in str(c).lower()), 'Rekomendasi Perbaikan')
         reko_val = data_site.get(kolom_reko, '')
         if pd.isna(reko_val): reko_val = ""
@@ -425,7 +426,6 @@ else:
     st.markdown("<div style='margin-top:10px; font-size:14px;'><b>📁 Evidence & Dokumentasi Slide</b></div>", unsafe_allow_html=True)
     all_photos, all_csvs, seen_urls = [], [], set()
     
-    # PERBAIKAN: Menggunakan df_merged.columns untuk membaca media/bukti tautan gdrive
     for col_name in df_merged.columns:
         val = data_site.get(col_name)
         if pd.isna(val) or not val: continue
@@ -441,7 +441,7 @@ else:
             label = f"{clean_label_name(col_name)} #{idx+1}" if len(urls) > 1 else clean_label_name(col_name)
             
             if thumb_url and not is_csv:
-                all_photos.append({'label': label, 'col': col_name, 'idx': idx, 'thumb': thumb_url, 'zoom': zoom_url, 'is_vid': is_video, 'embed': embed_url})
+                all_photos.append({'label': label, 'col': col_name, 'idx': idx, 'thumb': thumb_url, 'zoom': zoom_url, 'is_vid': is_video, 'embed': embed_url, 'dl_url': dl_url})
             elif is_csv: 
                 all_csvs.append({'label': label, 'url': dl_url if dl_url else url})
 
@@ -463,7 +463,8 @@ else:
             content = f'<iframe src="{p["embed"]}" width="80%" height="80%" style="border:none; background:#000; border-radius:8px;" allow="autoplay"></iframe>' if p['is_vid'] else f'<img src="{p["zoom"]}">'
             ovr = '<div class="video-overlay-btn">▶</div>' if p['is_vid'] else ''
             
-            html_str += f'<input type="checkbox" id="hide-{sid}" class="hide-checkbox"><div class="photo-card"><label for="hide-{sid}" class="exclude-btn" title="Hide">&times;</label><a href="#lightbox-{sid}"><div style="position:relative;"><img src="{p["thumb"]}" style="width:100px; height:75px; object-fit:cover; border:1px solid #555; border-radius:4px;"/><div class="video-overlay-btn">{ovr}</div></div></a><div style="font-size:10px; margin-top:4px; color:#ccc; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{p["label"]}</div></div><div id="lightbox-{sid}" class="lightbox"><a href="#" class="close-lightbox">&times;</a>{nav}{content}<div class="caption-text">{p["label"]}</div></div>'
+            # PERBAIKAN UTAMA: Menambahkan tag tombol <a href="{p['dl_url']}" class="btn-download-media">📥 Download</a> tepat di bawah nama label media
+            html_str += f'<input type="checkbox" id="hide-{sid}" class="hide-checkbox"><div class="photo-card"><label for="hide-{sid}" class="exclude-btn" title="Hide">&times;</label><a href="#lightbox-{sid}"><div style="position:relative;"><img src="{p["thumb"]}" style="width:100px; height:75px; object-fit:cover; border:1px solid #555; border-radius:4px;"/><div class="video-overlay-btn">{ovr}</div></div></a><div style="font-size:10px; margin-top:4px; color:#ccc; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="{p["label"]}">{p["label"]}</div><a href="{p["dl_url"]}" target="_blank" class="btn-download-media" download>📥 Download</a></div><div id="lightbox-{sid}" class="lightbox"><a href="#" class="close-lightbox">&times;</a>{nav}{content}<div class="caption-text">{p["label"]}</div></div>'
             
         if html_str: st.markdown(f'<div class="gallery-container">{html_str}</div>', unsafe_allow_html=True)
         else: st.caption("No unique documentation photos found.")

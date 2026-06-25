@@ -37,13 +37,13 @@ def cari_site_terdekat(site_appsheet, list_site_supabase):
 
 def konversi_link_gdrive(url_tunggal):
     if not url_tunggal or str(url_tunggal).strip() == "": return None, None, None, None
-    link_inter = str(url_tunggal).strip()
+    link_bersih = str(url_tunggal).strip()
     file_id = None
-    if "id=" in link_inter:
-        id_match = re.search(r'id=([a-zA-Z0-9_-]+)', link_inter)
+    if "id=" in link_bersih:
+        id_match = re.search(r'id=([a-zA-Z0-9_-]+)', link_bersih)
         if id_match: file_id = id_match.group(1)
-    elif "drive.google.com/file/d/" in link_inter:
-        id_match = re.search(r'/file/d/([a-zA-Z0-9_-]+)', link_inter)
+    elif "drive.google.com/file/d/" in link_bersih:
+        id_match = re.search(r'/file/d/([a-zA-Z0-9_-]+)', link_bersih)
         if id_match: file_id = id_match.group(1)
             
     if file_id:
@@ -52,7 +52,7 @@ def konversi_link_gdrive(url_tunggal):
         dl_url = f"https://drive.google.com/uc?export=download&id={file_id}"
         embed_url = f"https://drive.google.com/file/d/{file_id}/preview"
         return thumb_url, zoom_url, dl_url, embed_url
-    return link_inter, link_inter, link_inter, None
+    return link_bersih, link_bersih, link_bersih, None
 
 def dapatkan_nilai_teknis(row, kolom_sheet, kolom_supabase):
     val_sheet = None
@@ -150,13 +150,56 @@ def fetch_inap_for_site(site_clean, site_asli):
     except: pass
     return pd.DataFrame()
 
+# --- LOAD & MERGE PROCESS ---
 df_sheet = load_data_from_google_sheets()
 df_sup_dapot = load_data_from_supabase_dapot()
 
 if df_sheet.empty:
-    st.error("🚨 Gagal memuat data utama dari Google Sheets! Periksa setelan file atau koneksi Anda.")
+    st.error("🚨 Gagal memuat data utama dari Google Sheets! Periksa koneksi atau ID spreadsheet.")
 else:
     kolom_site_sheet = 'Site' if 'Site' in df_sheet.columns else ([c for c in df_sheet.columns if "site" in c.lower() or "id" in c.lower()] + [df_sheet.columns[0]])[0]
     df_sheet['site_clean_sheet'] = df_sheet[kolom_site_sheet].apply(format_site_id)
     
-    if
+    if not df_sup_dapot.empty:
+        df_sup_dapot['site_clean_sup'] = df_sup_dapot['site_id'].apply(format_site_id)
+        list_site_sup = df_sup_dapot['site_clean_sup'].dropna().unique().tolist()
+        mapping_fuzzy = {site_s: (site_s if site_s in list_site_sup else cari_site_terdekat(site_s, list_site_sup)) for site_s in df_sheet['site_clean_sheet'].unique()}
+        df_sheet['matched_site_sup'] = df_sheet['site_clean_sheet'].map(mapping_fuzzy)
+        df_merged = pd.merge(df_sheet, df_sup_dapot, left_on='matched_site_sup', right_on='site_clean_sup', how='left', suffixes=('', '_dapot'))
+    else:
+        df_merged = df_sheet.copy()
+        df_merged['matched_site_sup'] = None
+
+    def susun_nama_dropdown(row):
+        s_id = row['site_clean_sheet'] if pd.isna(row.get('matched_site_sup')) or not row['matched_site_sup'] else row['matched_site_sup']
+        s_name = row.get('site_name') if pd.notna(row.get('site_name')) else None
+        if not s_name and kolom_site_sheet in row:
+            s_name = row[kolom_site_sheet]
+        return f"[{s_id}] ➔ {s_name if pd.notna(s_name) else 'Belum Terdata di Supabase'}"
+        
+    df_merged['dropdown_label'] = df_merged.apply(susun_nama_dropdown, axis=1)
+
+    # --- CSS CUSTOM ---
+    st.markdown("""<style>
+    .block-container { padding-top: 3.2rem !important; padding-bottom: 1rem !important; }
+    .ppt-card-blue { background-color: #1e3d59; color: white; padding: 12px; border-radius: 6px; margin-bottom: 10px; border-left: 5px solid #ffc13b; }
+    .ppt-card-gold { background-color: #ffc13b; color: #1e3d59; padding: 12px; border-radius: 6px; margin-bottom: 10px; border-left: 5px solid #1e3d59; }
+    .gallery-container { display: flex; overflow-x: auto; padding: 10px; background-color: #111; border-radius: 8px; border: 1px solid #333; }
+    .photo-card { flex: 0 0 auto; width: 110px; margin-right: 12px; text-align: center; position: relative; cursor: pointer; }
+    .hide-checkbox { display: none; }
+    .hide-checkbox:checked + .photo-card { display: none; }
+    .exclude-btn { position: absolute; top: 1px; right: 8px; background: rgba(211,47,47,0.9); color: white; border-radius: 50%; width: 16px; height: 16px; font-size: 10px; line-height: 16px; cursor: pointer; font-weight: bold; z-index: 10; }
+    .lightbox { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 9999999; justify-content: center; align-items: center; }
+    .lightbox:target { display: flex; }
+    .lightbox img, .lightbox iframe { max-width: 80%; max-height: 80%; border-radius: 6px; box-shadow: 0px 5px 25px rgba(0,0,0,0.5); }
+    .lightbox .close-lightbox { position: absolute; top: 20px; right: 40px; color: #fff; font-size: 40px; text-decoration: none; font-weight: bold; z-index: 99999999; text-shadow: 0px 2px 5px #000; }
+    .lightbox .nav-arrow { position: absolute; top: 50%; color: #fff; font-size: 50px; font-weight: bold; text-decoration: none; transform: translateY(-50%); padding: 20px; z-index: 99999999; text-shadow: 0px 2px 8px #000; }
+    .lightbox .prev-arrow { left: 40px; } .lightbox .next-arrow { right: 40px; }
+    .lightbox .caption-text { position: absolute; bottom: 30px; color: #ffc13b; font-size: 18px; font-weight: bold; text-align: center; width: 100%; text-shadow: 0px 2px 4px rgba(0,0,0,0.8); z-index: 99999999; font-family: sans-serif; letter-spacing: 0.5px; }
+    .video-overlay-btn { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(211, 47, 47, 0.85); color: white; border-radius: 50%; width: 26px; height: 24px; line-height: 24px; font-size: 11px; font-weight: bold; pointer-events: none; box-shadow: 0px 2px 5px rgba(0,0,0,0.5); }
+    .btn-download-media { display: block; background-color: #2e7d32; color: #ffffff !important; font-size: 9px; font-weight: bold; padding: 4px 2px; margin-top: 5px; border-radius: 3px; text-decoration: none !important; border: 1px solid #1b5e20; text-align: center; }
+    .btn-download-media:hover { background-color: #4caf50; }
+    div[data-testid="stMetric"] { background-color: #262730; padding: 5px 10px; border-radius: 4px; border: 1px solid #444; }
+    .findings-grid { display: grid; grid-template-columns: auto auto; gap: 8px 15px; background-color: #262730; padding: 12px; border-radius: 6px; font-size: 13px; margin-bottom: 10px; border: 1px solid #444; }
+    .f-item { display: flex; justify-content: space-between; border-bottom: 1px solid #333; padding-bottom: 4px; }
+    .custom-footer { text-align: center; font-size: 12px; color: #888; margin-top:

@@ -8,12 +8,14 @@ import altair as alt
 # Konfigurasi halaman agar fullscreen, responsif, dan rapi ala slide PPT
 st.set_page_config(layout="wide", page_title="Task Force 348 Dashboard")
 
-# --- KREDENSIAL & DATA SOURCE MASTER ---
+# --- KREDENSIAL & DATA SOURCE MASTER (Direkomendasikan menggunakan st.secrets) ---
 GOOGLE_SHEET_ID = "1FGKOzWoUrbf3PXN_ahgG1t-83JZT4H4sioQepePbBxM"
 APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxCQUGt5_Jybed2AwFP4xXFru6GxuMoSwQpUZ63aK9o0WlUFnumOoseRWwgRmxZZ9XYtQ/exec"
 
-SUPABASE_URL = "https://sfyfijndolnwqklqnpmj.supabase.co"
-SUPABASE_KEY = "sb_publishable_digs5GILs-TEe4lEpPj4qQ_VRrQ7FCm"
+# Ambil dari st.secrets jika sudah ditaruh di .toml, jika belum gunakan fallback ini dulu
+SUPABASE_URL = st.secrets.get("SUPABASE_URL", "https://sfyfijndolnwqklqnpmj.supabase.co")
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "sb_publishable_digs5GILs-TEe4lEpPj4qQ_VRrQ7FCm")
+
 SUPABASE_TABLE_DAPOT = "dapot_data"
 SUPABASE_TABLE_INAP = "inap_data"
 
@@ -39,7 +41,7 @@ def konversi_link_gdrive(url_tunggal):
     link_bersih = str(url_tunggal).strip()
     file_id = None
     if "id=" in link_bersih:
-        id_match = re.search(r'id=([a-zA-Z0-9_-]+)', link_bersih)
+        id_match = re.search(r'id=([a-zA-Z0-9_-]+)', link_match := link_bersih)
         if id_match: file_id = id_match.group(1)
     elif "drive.google.com/file/d/" in link_bersih:
         id_match = re.search(r'/file/d/([a-zA-Z0-9_-]+)', link_bersih)
@@ -96,8 +98,11 @@ def update_tech_specs_gsheet(site_id_asli, dict_specs):
 @st.cache_data(ttl=60)
 def load_data_from_google_sheets():
     url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/export?format=csv"
-    try: return pd.read_csv(url)
-    except: return pd.DataFrame()
+    try: 
+        return pd.read_csv(url)
+    except Exception as e: 
+        st.sidebar.error(f"Error GSheet: {e}") # Log error ke UI admin/sidebar agar terpantau
+        return pd.DataFrame()
 
 @st.cache_data(ttl=600)
 def load_data_from_supabase_dapot():
@@ -107,8 +112,38 @@ def load_data_from_supabase_dapot():
         response = requests.get(url, headers=headers)
         if response.status_code == 200: return pd.DataFrame(response.json())
         return pd.DataFrame()
-    except: return pd.DataFrame()
+    except Exception as e: 
+        st.sidebar.error(f"Error Supabase Dapot: {e}")
+        return pd.DataFrame()
 
+# OPTIMASI: Bungkus proses penggabungan data berat (Fuzzy Match) ke fungsi ter-cache
+@st.cache_data(ttl=60)
+def dapatkan_data_tergabung(df_sheet_raw, df_sup_dapot_raw):
+    if df_sheet_raw.empty or df_sup_dapot_raw.empty:
+        return pd.DataFrame()
+        
+    df_s = df_sheet_raw.copy()
+    df_d = df_sup_dapot_raw.copy()
+    
+    kolom_site_sheet = 'Site' if 'Site' in df_s.columns else ([c for c in df_s.columns if "site" in c.lower() or "id" in c.lower()] + [df_s.columns[0]])[0]
+    df_s['site_clean_sheet'] = df_s[kolom_site_sheet].apply(format_site_id)
+    df_d['site_clean_sup'] = df_d['site_id'].apply(format_site_id)
+    
+    list_site_sup = df_d['site_clean_sup'].dropna().unique().tolist()
+    mapping_fuzzy = {site_s: (site_s if site_s in list_site_sup else cari_site_terdekat(site_s, list_site_sup)) for site_s in df_s['site_clean_sheet'].unique()}
+    df_s['matched_site_sup'] = df_s['site_clean_sheet'].map(mapping_fuzzy)
+    
+    df_m = pd.merge(df_s, df_d, left_on='matched_site_sup', right_on='site_clean_sup', how='left', suffixes=('', '_dapot'))
+
+    def susun_nama_dropdown(row):
+        s_id = row['matched_site_sup'] if pd.notna(row['matched_site_sup']) else row['site_clean_sheet']
+        s_name = row['site_name'] if pd.notna(row.get('site_name')) else 'UNKNOWN NAME'
+        return f"[{s_id}] ➔ {s_name}"
+        
+    df_m['dropdown_label'] = df_m.apply(susun_nama_dropdown, axis=1)
+    return df_m, kolom_site_sheet
+
+@st.cache_data(ttl=300)
 def fetch_inap_for_site(site_clean, site_asli):
     variants = set()
     for s in [site_clean, site_asli]:
@@ -149,27 +184,16 @@ def fetch_inap_for_site(site_clean, site_asli):
     except: pass
     return pd.DataFrame()
 
-df_sheet = load_data_from_google_sheets()
-df_sup_dapot = load_data_from_supabase_dapot()
+# --- EKSEKUSI PIPELINE DATA ---
+df_sheet_raw = load_data_from_google_sheets()
+df_sup_dapot_raw = load_data_from_supabase_dapot()
 
-if df_sheet.empty or df_sup_dapot.empty:
-    st.error("🚨 Gagal memuat data utama! Cek koneksi Google Sheet (Geser tab ke paling kiri) & Supabase Credentials.")
+res_proses = dapatkan_data_tergabung(df_sheet_raw, df_sup_dapot_raw)
+
+if not res_proses:
+    st.error("🚨 Gagal memuat data utama! Cek koneksi Google Sheet & Supabase Credentials.")
 else:
-    kolom_site_sheet = 'Site' if 'Site' in df_sheet.columns else ([c for c in df_sheet.columns if "site" in c.lower() or "id" in c.lower()] + [df_sheet.columns[0]])[0]
-    df_sheet['site_clean_sheet'] = df_sheet[kolom_site_sheet].apply(format_site_id)
-    df_sup_dapot['site_clean_sup'] = df_sup_dapot['site_id'].apply(format_site_id)
-    
-    list_site_sup = df_sup_dapot['site_clean_sup'].dropna().unique().tolist()
-    mapping_fuzzy = {site_s: (site_s if site_s in list_site_sup else cari_site_terdekat(site_s, list_site_sup)) for site_s in df_sheet['site_clean_sheet'].unique()}
-    df_sheet['matched_site_sup'] = df_sheet['site_clean_sheet'].map(mapping_fuzzy)
-    df_merged = pd.merge(df_sheet, df_sup_dapot, left_on='matched_site_sup', right_on='site_clean_sup', how='left', suffixes=('', '_dapot'))
-
-    def susun_nama_dropdown(row):
-        s_id = row['matched_site_sup'] if pd.notna(row['matched_site_sup']) else row['site_clean_sheet']
-        s_name = row['site_name'] if pd.notna(row.get('site_name')) else 'UNKNOWN NAME'
-        return f"[{s_id}] ➔ {s_name}"
-        
-    df_merged['dropdown_label'] = df_merged.apply(susun_nama_dropdown, axis=1)
+    df_merged, kolom_site_sheet = res_proses
 
     # --- CSS CUSTOM ---
     st.markdown("""<style>
@@ -307,6 +331,7 @@ else:
                 chart_data[col_date] = pd.to_datetime(chart_data[col_date], errors='coerce')
                 chart_data = chart_data.dropna(subset=[col_date])
                 
+                # Modifikasi batas wajar agar dinamis sesuai real-time tahun berjalan (2026)
                 batas_wajar = pd.Timestamp.now() + pd.Timedelta(days=7)
                 chart_data = chart_data[(chart_data[col_date].dt.year > 2000) & (chart_data[col_date] <= batas_wajar)]
                 
@@ -361,7 +386,6 @@ else:
     with c4:
         st.markdown("<div class='ppt-card-gold'><b style='font-size:14px;'>📝 Findings & Action Plan</b></div>", unsafe_allow_html=True)
         
-        # FIX Python: Pencarian super kebal typo kata dasar 'analis' untuk narik data ke text_area
         kolom_finding = next((c for c in df_sheet.columns if "hasil" in str(c).lower() and "analis" in str(c).lower()), 'Hasil Analisa')
         finding_val = data_site.get(kolom_finding, '')
         if pd.isna(finding_val): finding_val = ""
@@ -394,7 +418,9 @@ else:
                     with st.spinner("Saving..."):
                         s, p = update_action_finding_gsheet(data_site[kolom_site_sheet], teks_reko, teks_find)
                         if s: 
-                            st.success("Tersimpan!"); st.cache_data.clear(); st.rerun()
+                            st.success("Tersimpan!")
+                            st.cache_data.clear()
+                            st.rerun()
                         else: st.error(f"Gagal: {p}")
             with b2:
                 if st.button("❌ Batal", use_container_width=True): st.rerun()

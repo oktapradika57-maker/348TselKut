@@ -490,4 +490,4 @@ else:
         if html_str: st.markdown(f'<div class="gallery-container">{html_str}</div>', unsafe_allow_html=True)
         else: st.caption("No unique documentation photos found.")
 
-    st.markdown("<div class='custom-footer'>© 2026 | Created with ❤️ by Fauzi Ramdani - 97122</div>", unsafe_allow_html=True)
+    st.markdown("<div class='custom-footer'>© 2026 | Created with ❤️ by Okta Pradika - KUT</div>", unsafe_allow_html=True)
